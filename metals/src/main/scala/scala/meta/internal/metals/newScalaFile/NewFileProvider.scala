@@ -35,7 +35,8 @@ class NewFileProvider(
   def handleFileCreation(
       directoryUri: Option[URI],
       name: Option[String],
-      fileType: Option[String]
+      fileType: Option[String],
+      isScala: Boolean
   ): Future[Unit] = {
     val directory = directoryUri
       .map { uri =>
@@ -51,8 +52,8 @@ class NewFileProvider(
       fileType.flatMap(getFromString) match {
         case Some(ft) => createFile(directory, ft, name)
         case None =>
-          askForKind
-            .flatMapOption(createFile(directory, _, name))
+          val askForKind = if (isScala) askForScalaKind else askForJavaKind
+          askForKind.flatMapOption(createFile(directory, _, name))
       }
     }
 
@@ -72,7 +73,12 @@ class NewFileProvider(
       case kind @ (Class | CaseClass | Object | Trait) =>
         getName(kind, name)
           .mapOption(
-            createClass(directory, _, kind)
+            createClass(directory, _, kind, ".scala")
+          )
+      case kind @ (JavaClass | JavaEnum | JavaInterface | JavaRecord) =>
+        getName(kind, name)
+          .mapOption(
+            createClass(directory, _, kind, ".java")
           )
       case Worksheet =>
         getName(Worksheet, name)
@@ -89,19 +95,13 @@ class NewFileProvider(
     }
   }
 
-  private def askForKind: Future[Option[NewFileType]] = {
+  private def askForKind(
+      kinds: List[NewFileType]
+  ): Future[Option[NewFileType]] = {
     client
       .metalsQuickPick(
         MetalsQuickPickParams(
-          List(
-            Class.toQuickPickItem,
-            CaseClass.toQuickPickItem,
-            Object.toQuickPickItem,
-            Trait.toQuickPickItem,
-            PackageObject.toQuickPickItem,
-            Worksheet.toQuickPickItem,
-            AmmoniteScript.toQuickPickItem
-          ).asJava,
+          kinds.map(_.toQuickPickItem).asJava,
           placeHolder = NewScalaFile.selectTheKindOfFileMessage
         )
       )
@@ -110,6 +110,31 @@ class NewFileProvider(
         case kind if !kind.cancelled => getFromString(kind.itemId)
         case _ => None
       }
+  }
+
+  private def askForScalaKind: Future[Option[NewFileType]] = {
+    askForKind(
+      List(
+        Class,
+        CaseClass,
+        Object,
+        Trait,
+        PackageObject,
+        Worksheet,
+        AmmoniteScript
+      )
+    )
+  }
+
+  private def askForJavaKind: Future[Option[NewFileType]] = {
+    askForKind(
+      List(
+        JavaClass,
+        JavaInterface,
+        JavaEnum,
+        JavaRecord
+      )
+    )
   }
 
   private def askForName(kind: String): Future[Option[String]] = {
@@ -137,16 +162,18 @@ class NewFileProvider(
   private def createClass(
       directory: Option[AbsolutePath],
       name: String,
-      kind: NewFileType
+      kind: NewFileType,
+      ext: String
   ): Future[(AbsolutePath, Range)] = {
-    val path = directory.getOrElse(workspace).resolve(name + ".scala")
+    val path = directory.getOrElse(workspace).resolve(name + ext)
     //name can be actually be "foo/Name", where "foo" is a folder to create
     val className = Identifier.backtickWrap(
       directory.getOrElse(workspace).resolve(name).filename
     )
     val template = kind match {
       case CaseClass => caseClassTemplate(className)
-      case _ => classTemplate(kind.id, className)
+      case JavaRecord => javaRecordTemplate(className)
+      case _ => classTemplate(kind.syntax, className)
     }
     val editText = template.map { s =>
       packageProvider
@@ -229,6 +256,13 @@ class NewFileProvider(
     val indent = "  "
     NewFileTemplate(s"""|$kind $name {
                         |$indent@@
+                        |}
+                        |""".stripMargin)
+  }
+
+  private def javaRecordTemplate(name: String): NewFileTemplate = {
+    NewFileTemplate(s"""|record $name(@@) {
+                        |
                         |}
                         |""".stripMargin)
   }

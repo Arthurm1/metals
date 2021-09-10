@@ -1774,7 +1774,17 @@ class MetalsLanguageServer(
         val name = args.lift(1).flatMap(Argument.getAsString)
         val fileType = args.lift(2).flatMap(Argument.getAsString)
         newFileProvider
-          .handleFileCreation(directoryURI, name, fileType)
+          .handleFileCreation(directoryURI, name, fileType, true)
+          .asJavaObject
+
+      case ServerCommands.NewJavaFile() =>
+        val args = params.getArguments.asScala
+        val directoryURI =
+          args.lift(0).flatMap(Argument.getAsString).map(new URI(_))
+        val name = args.lift(1).flatMap(Argument.getAsString)
+        val fileType = args.lift(2).flatMap(Argument.getAsString)
+        newFileProvider
+          .handleFileCreation(directoryURI, name, fileType, false)
           .asJavaObject
 
       case ServerCommands.StartAmmoniteBuildServer() =>
