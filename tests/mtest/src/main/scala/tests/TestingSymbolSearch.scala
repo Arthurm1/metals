@@ -61,7 +61,7 @@ class TestingSymbolSearch(
         ju.Collections.emptyList()
       case Some(value) =>
         import scala.collection.JavaConverters._
-        val filename = value.path.toNIO.getFileName().toString()
+        val filename = value.path.toURI.toString()
         val content = new String(Files.readAllBytes(value.path.toNIO))
         val input = Input.VirtualFile(
           filename,

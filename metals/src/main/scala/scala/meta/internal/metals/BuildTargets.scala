@@ -298,32 +298,36 @@ final class BuildTargets(
   def inferBuildTarget(
       source: AbsolutePath
   ): Option[BuildTargetIdentifier] = {
-    val readonly = workspace.resolve(Directories.readonly)
-    source.toRelativeInside(readonly) match {
-      case Some(rel) =>
-        val names = rel.toNIO.iterator().asScala.toList.map(_.filename)
-        names match {
-          case Directories.dependenciesName :: jarName :: _ =>
-            // match build target by source jar name
-            inverseDependencySources
-              .collectFirst {
-                case (path, ids) if path.filename == jarName && ids.nonEmpty =>
-                  ids.head
-              }
-          case _ =>
-            None
-        }
-      case None =>
-        // else it can be a source file inside a jar
-        val fromJar = jarPath(source)
-          .flatMap { jar =>
-            all.find { scalaTarget =>
-              scalaTarget.jarClasspath.contains(jar)
-            }
+    if (source.isSourceJar || source.isJDKSource)
+      source.jarPath.flatMap(inverseDependencySources(_).headOption)
+    else {
+      val readonly = workspace.resolve(Directories.readonly)
+      source.toRelativeInside(readonly) match {
+        case Some(rel) =>
+          val names = rel.toNIO.iterator().asScala.toList.map(_.filename)
+          names match {
+            case Directories.dependenciesName :: jarName :: _ =>
+              // match build target by source jar name
+              inverseDependencySources
+                .collectFirst {
+                  case (path, ids)
+                      if path.filename == jarName && ids.nonEmpty =>
+                    ids.head
+                }
+            case _ => None
           }
-          .map(_.id)
-        fromJar.foreach(addSourceItem(source, _))
-        fromJar
+        case None =>
+          // else it can be a source file inside a jar
+          val fromJar = jarPath(source)
+            .flatMap { jar =>
+              all.find { scalaTarget =>
+                scalaTarget.jarClasspath.contains(jar)
+              }
+            }
+            .map(_.id)
+          fromJar.foreach(addSourceItem(source, _))
+          fromJar
+      }
     }
   }
 

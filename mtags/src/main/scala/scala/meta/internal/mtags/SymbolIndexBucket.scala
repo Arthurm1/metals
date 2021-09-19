@@ -95,7 +95,7 @@ class SymbolIndexBucket(
       dialect: Dialect
   ): List[String] = {
     val text = FileIO.slurp(source, StandardCharsets.UTF_8)
-    val input = Input.VirtualFile(uri, text)
+    val input = Input.VirtualFile(source.toURI.toString(), text)
     val sourceToplevels = mtags.toplevels(input, dialect)
     if (source.isAmmoniteScript)
       sourceToplevels

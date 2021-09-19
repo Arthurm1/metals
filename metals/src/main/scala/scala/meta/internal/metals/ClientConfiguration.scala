@@ -49,6 +49,9 @@ class ClientConfiguration(
       initialConfig.isCommandInHtmlSupported
     )
 
+  def isVirtualDocumentSupported(): Boolean =
+    initializationOptions.isVirtualDocumentSupported.getOrElse(false)
+
   def icons(): Icons =
     initializationOptions.icons
       .map(Icons.fromString)

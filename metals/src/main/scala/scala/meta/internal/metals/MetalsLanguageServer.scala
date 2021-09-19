@@ -322,7 +322,7 @@ class MetalsLanguageServer(
       case None =>
         languageClient.showMessage(Messages.noRoot)
       case Some(path) =>
-        workspace = AbsolutePath(Paths.get(URI.create(path))).dealias
+        workspace = path.toAbsolutePath
         MetalsLogger.setupLspLogger(workspace, redirectSystemOut)
 
         val clientInfo = Option(params.getClientInfo()) match {
@@ -478,7 +478,8 @@ class MetalsLanguageServer(
           remote,
           trees,
           buildTargets,
-          scalaVersionSelector
+          scalaVersionSelector,
+          !clientConfig.isVirtualDocumentSupported()
         )
         formattingProvider = new FormattingProvider(
           workspace,
@@ -594,6 +595,7 @@ class MetalsLanguageServer(
           clientConfig.initialConfig.statistics,
           buildTargets,
           definitionIndex,
+          !clientConfig.isVirtualDocumentSupported(),
           excludedPackageHandler.isExcludedPackage
         )
         symbolSearch = new MetalsSymbolSearch(

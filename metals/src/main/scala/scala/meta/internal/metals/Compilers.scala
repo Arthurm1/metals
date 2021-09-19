@@ -137,7 +137,8 @@ class Compilers(
                   isExcludedPackage,
                   userConfig,
                   trees,
-                  buildTargets
+                  buildTargets,
+                  !config.isVirtualDocumentSupported()
                 )
               ).getOrElse(EmptySymbolSearch),
               "default"
@@ -427,6 +428,7 @@ class Compilers(
             isExcludedPackage,
             trees,
             buildTargets,
+            !config.isVirtualDocumentSupported(),
             workspaceFallback = Some(search)
           )
           newCompiler(scalac, scalaTarget, classpath, worksheetSearch)
@@ -451,7 +453,8 @@ class Compilers(
               isExcludedPackage,
               userConfig,
               trees,
-              buildTargets
+              buildTargets,
+              !config.isVirtualDocumentSupported()
             ),
             path.toString()
           )

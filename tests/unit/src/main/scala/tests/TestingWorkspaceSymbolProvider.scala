@@ -20,6 +20,7 @@ object TestingWorkspaceSymbolProvider {
       statistics = statistics,
       buildTargets = BuildTargets.withoutAmmonite,
       index = index,
+      saveClassFileToDisk = true,
       new ExcludedPackagesHandler().isExcludedPackage,
       bucketSize = bucketSize
     )

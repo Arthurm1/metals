@@ -46,6 +46,7 @@ import ch.epfl.scala.{bsp4j => b}
 import io.undertow.server.HttpServerExchange
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.{lsp4j => l}
+import java.net.URLDecoder
 
 /**
  * One stop shop for all extension methods that are used in the metals build.
@@ -263,7 +264,7 @@ object MetalsEnrichments
 
   implicit class XtensionPath(path: Path) {
     def toUriInput: Input.VirtualFile = {
-      val uri = path.toUri.toString
+      val uri = path.toAbsolutePath.toUri.toString
       val text = new String(Files.readAllBytes(path), StandardCharsets.UTF_8)
       Input.VirtualFile(uri, text)
     }
@@ -282,9 +283,11 @@ object MetalsEnrichments
         accum.resolve(filename.toString)
       }
     }
-    def isDependencySource(workspace: AbsolutePath): Boolean =
-      isLocalFileSystem(workspace) &&
-        isInReadonlyDirectory(workspace)
+    def isDependencySource(workspace: AbsolutePath): Boolean = {
+      (isLocalFileSystem(workspace) &&
+        isInReadonlyDirectory(workspace)) ||
+      isSourceJar
+    }
 
     def isWorkspaceSource(workspace: AbsolutePath): Boolean =
       isLocalFileSystem(workspace) &&
@@ -434,12 +437,18 @@ object MetalsEnrichments
       filename.endsWith(".jar") || filename.endsWith(".srcjar")
     }
 
+    def isSourceJar: Boolean =
+      path.jarPath.exists(_.filename.endsWith("-sources.jar"))
+
+    def isJDKSource: Boolean =
+      path.jarPath.exists(_.filename == "src.zip")
+
     /**
      * Reads file contents from editor buffer with fallback to disk.
      */
     def toInputFromBuffers(buffers: Buffers): m.Input.VirtualFile = {
       buffers.get(path) match {
-        case Some(text) => Input.VirtualFile(path.toString(), text)
+        case Some(text) => Input.VirtualFile(path.toURI.toString(), text)
         case None => path.toInput
       }
     }
@@ -573,8 +582,14 @@ object MetalsEnrichments
 
     def toAbsolutePath: AbsolutePath = toAbsolutePath(followSymlink = true)
     def toAbsolutePath(followSymlink: Boolean): AbsolutePath = {
+      // jar schemes must have "jar:file:"" instead of "jar:file%3A" or jar file system won't recognise the URI.
+      // but don't overdecode as URIs may not be recognised e.g. "com-microsoft-java-debug-core-0.32.0%2B1.jar" is correct
+      val decodedUriStr =
+        if (value.toUpperCase.startsWith("JAR:FILE%3A"))
+          URLDecoder.decode(value, "UTF-8")
+        else value
       val path = AbsolutePath(
-        Paths.get(URI.create(value.stripPrefix("metals:")))
+        Paths.get(URI.create(decodedUriStr.stripPrefix("metals:")))
       )
       if (followSymlink)
         path.dealias
@@ -715,7 +730,7 @@ object MetalsEnrichments
   implicit class XtensionScalacOptions(item: b.ScalacOptionsItem) {
     def classpath: Iterator[AbsolutePath] = {
       item.getClasspath.asScala.iterator
-        .map(uri => AbsolutePath(Paths.get(URI.create(uri))))
+        .map(uri => uri.toAbsolutePath)
         .filter(p => Files.exists(p.toNIO))
     }
     def targetroot(scalaVersion: String): AbsolutePath = {

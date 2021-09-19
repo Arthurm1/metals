@@ -5,7 +5,6 @@ import java.io.PrintStream
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
-import java.nio.file.Paths
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -122,12 +121,7 @@ final class FileDecoderProvider(
 
   private def decodeJar(uri: URI): Option[(Decoder, PathInfo)] = {
     Try {
-      // jar file system cannot cope with a heavily encoded uri
-      // hence the roundabout way of creating an AbsolutePath
-      // must have "jar:file:"" instead of "jar:file%3A"
-      val decodedUriStr = URLDecoder.decode(uri.toString(), "UTF-8")
-      val decodedUri = URI.create(decodedUriStr)
-      AbsolutePath(Paths.get(decodedUri))
+      uri.toString().toAbsolutePath
     }.toOption
       .map(path =>
         (

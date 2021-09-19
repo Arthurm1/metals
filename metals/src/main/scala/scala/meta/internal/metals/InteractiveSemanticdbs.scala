@@ -70,7 +70,7 @@ final class InteractiveSemanticdbs(
           source.isSbt || // sbt files
           source.isWorksheet || // worksheets
           doesNotBelongToBuildTarget // standalone files
-      )
+      ) || source.isSourceJar // dependencies
     }
 
     // anything aside from `*.scala`, `*.sbt` and `*.sc` file
