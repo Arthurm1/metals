@@ -58,10 +58,11 @@ final class ImplementationProvider(
   }
 
   def onChange(docs: TextDocuments, path: AbsolutePath): Unit = {
-    implementationsInPath.compute(
-      path.toNIO,
-      { (_, _) => computeInheritance(docs) }
-    )
+    if (!path.isJarFileSystem)
+      implementationsInPath.compute(
+        path.toNIO,
+        { (_, _) => computeInheritance(docs) }
+      )
   }
 
   private def computeInheritance(
@@ -312,10 +313,14 @@ final class ImplementationProvider(
     allLocations.asScala
   }
 
-  private def findSemanticdb(fileSource: AbsolutePath): Option[TextDocument] =
-    semanticdbs
-      .textDocument(fileSource)
-      .documentIncludingStale
+  private def findSemanticdb(fileSource: AbsolutePath): Option[TextDocument] = {
+    if (fileSource.isJarFileSystem)
+      None
+    else
+      semanticdbs
+        .textDocument(fileSource)
+        .documentIncludingStale
+  }
 
   private def findImplementation(
       symbol: String,
