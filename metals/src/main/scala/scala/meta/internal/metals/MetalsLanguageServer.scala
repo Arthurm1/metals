@@ -789,7 +789,8 @@ class MetalsLanguageServer(
         findTextInJars = new FindTextInDependencyJars(
           buildTargets,
           () => workspace,
-          languageClient
+          languageClient,
+          saveJarFileToDisk = !clientConfig.isVirtualDocumentSupported()
         )
     }
   }
