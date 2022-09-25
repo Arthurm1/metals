@@ -9,6 +9,8 @@ import scala.meta.internal.io.FileIO
 import scala.meta.internal.metals.BuildTargets
 import scala.meta.internal.metals.Directories
 import scala.meta.internal.metals.MetalsEnrichments._
+import scala.meta.internal.metals.filesystem.MetalsFileSystem
+import scala.meta.internal.metals.filesystem.MetalsPath
 import scala.meta.io.AbsolutePath
 
 import ch.epfl.scala.bsp4j.BuildTargetIdentifier
@@ -23,13 +25,9 @@ private[debug] final class SourcePathAdapter(
   private val dependencies = workspace.resolve(Directories.dependencies)
 
   def toDapURI(sourcePath: AbsolutePath): Option[URI] = {
-    if (
-      !supportVirtualDocuments && sourcePath.toNIO.startsWith(
-        dependencies.toNIO
-      )
-    ) {
+    if (saveJarFileToDisk && sourcePath.toNIO.startsWith(dependencies.toNIO)) {
       // if sourcePath is a dependency source file
-      // we retrieve the original source jar and we build the uri innside the source jar filesystem
+      // we retrieve the original source jar and we build the uri inside the source jar filesystem
       for {
         dependencySource <- sourcePath.toRelativeInside(dependencies)
         dependencyFolder <- dependencySource.toNIO.iterator.asScala.headOption
@@ -42,7 +40,11 @@ private[debug] final class SourcePathAdapter(
         root.resolve(relativePath.toString).toURI
       )
     } else {
-      Some(sourcePath.toURI)
+      sourcePath.toNIO match {
+        case metalsPath: MetalsPath => metalsPath.originalJarURI
+        case _ => Some(sourcePath.toURI)
+      }
+
     }
   }
 
@@ -51,8 +53,11 @@ private[debug] final class SourcePathAdapter(
       Try(URI.create(sourcePath)).getOrElse(Paths.get(sourcePath).toUri())
     sourceUri.getScheme match {
       case "jar" =>
-        val path = sourceUri.toAbsolutePath
-        Some(if (saveJarFileToDisk) path.toFileOnDisk(workspace) else path)
+        MetalsFileSystem.metalsFS
+          .getMetalsJarPath(sourceUri)
+          .map(path =>
+            if (saveJarFileToDisk) path.toFileOnDisk(workspace) else path
+          )
       case "file" => Some(AbsolutePath(Paths.get(sourceUri)))
       case _ => None
     }

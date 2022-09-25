@@ -47,7 +47,7 @@ private[debug] final case class ClientConfigurationAdapter(
       // VS Code normally sends in path, which doesn't encode files from jars properly
       // so URIs are actually sent in this case instead
       case InitializeRequestArgumentsPathFormat.PATH
-          if !path.startsWith("file:") && !path.startsWith("jar:") =>
+          if !path.startsWith("file:") && !path.startsWith("jar:") && !path.startsWith("metalsfs:") =>
         Paths.get(path).toUri.toString.toAbsolutePath
       case _ => path.toAbsolutePath
     }
@@ -56,7 +56,8 @@ private[debug] final case class ClientConfigurationAdapter(
   def adaptPathForClient(path: AbsolutePath): String = {
     pathFormat match {
       case InitializeRequestArgumentsPathFormat.PATH =>
-        if (path.isJarFileSystem) path.toURI.toString else path.toString
+        if (path.isJarFileSystem || path.isMetalsFileSystem) path.toURI.toString
+        else path.toString
       case InitializeRequestArgumentsPathFormat.URI => path.toURI.toString
     }
   }

@@ -11,6 +11,7 @@ import scala.meta.dialects
 import scala.meta.internal.metals.MetalsEnrichments._
 import scala.meta.internal.metals._
 import scala.meta.internal.metals.clients.language.MetalsLanguageClient
+import scala.meta.internal.metals.filesystem.MetalsFileSystem
 import scala.meta.internal.mtags.GlobalSymbolIndex
 import scala.meta.internal.mtags.Mtags
 import scala.meta.internal.mtags.Symbol
@@ -51,7 +52,7 @@ class MetalsTreeViewProvider(
     _.toAbsolutePath,
     _.filename,
     _.toString,
-    () => buildTargets.allWorkspaceJars,
+    () => MetalsFileSystem.metalsFS.getWorkspaceJarPaths.iterator,
     (path, symbol) => classpath.symbols(path, symbol),
   )
 
@@ -294,7 +295,7 @@ class MetalsTreeViewProvider(
         (!isLeading, distance)
       }
       val result =
-        if (path.isDependencySource(workspace()) || path.isJarFileSystem) {
+        if (path.isDependencySource(workspace()) || path.isMetalsFileSystem) {
           buildTargets
             .inferBuildTarget(List(Symbol(closestSymbol.symbol).toplevel))
             .map { inferred =>

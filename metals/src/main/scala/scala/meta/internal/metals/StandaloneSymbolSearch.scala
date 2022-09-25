@@ -7,6 +7,7 @@ import java.{util => ju}
 import scala.collection.concurrent.TrieMap
 
 import scala.meta.internal.metals.MetalsEnrichments._
+import scala.meta.internal.metals.filesystem.MetalsFileSystem
 import scala.meta.internal.mtags.Mtags
 import scala.meta.internal.mtags.OnDemandSymbolIndex
 import scala.meta.internal.parsing.Trees
@@ -201,16 +202,25 @@ object StandaloneSymbolSearch {
     (missingScala, JdkSources(javaHome)) match {
       case (true, Left(_)) =>
         val (scalaSources, scalaClasspath) = getScala(scalaVersion)
-        (sources ++ scalaSources, classpath ++ scalaClasspath)
+        val mappedSources = scalaSources.map(source =>
+          MetalsFileSystem.metalsFS.getSourceJar(source)
+        )
+        (sources ++ mappedSources, classpath ++ scalaClasspath)
       case (true, Right(absPath)) =>
         val (scalaSources, scalaClasspath) = getScala(scalaVersion)
+        val mappedSources = scalaSources.map(source =>
+          MetalsFileSystem.metalsFS.getSourceJar(source)
+        )
+        val jdkPath = MetalsFileSystem.metalsFS.getJDK(absPath)
         (
-          (scalaSources :+ absPath) ++ sources,
+          (mappedSources :+ jdkPath) ++ sources,
           classpath ++ scalaClasspath,
         )
-      case (false, Left(_)) => (sources, classpath)
+      case (false, Left(_)) =>
+        (sources, classpath)
       case (false, Right(absPath)) =>
-        (sources :+ absPath, classpath)
+        val jdkPath = MetalsFileSystem.metalsFS.getJDK(absPath)
+        (sources :+ jdkPath, classpath)
     }
   }
 

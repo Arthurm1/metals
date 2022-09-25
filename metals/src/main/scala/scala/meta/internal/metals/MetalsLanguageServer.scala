@@ -62,6 +62,7 @@ import scala.meta.internal.metals.debug.BuildTargetClasses
 import scala.meta.internal.metals.debug.DebugProvider
 import scala.meta.internal.metals.doctor.Doctor
 import scala.meta.internal.metals.doctor.DoctorVisibilityDidChangeParams
+import scala.meta.internal.metals.filesystem.MetalsFileSystem
 import scala.meta.internal.metals.findfiles._
 import scala.meta.internal.metals.formatting.OnTypeFormattingProvider
 import scala.meta.internal.metals.formatting.RangeFormattingProvider
@@ -284,6 +285,7 @@ class MetalsLanguageServer(
   private var compilers: Compilers = _
   private var scalafixProvider: ScalafixProvider = _
   private var fileDecoderProvider: FileDecoderProvider = _
+  private var lspFileSystemProvider: LSPFileSystemProvider = _
   private var testProvider: TestSuitesProvider = _
   private var workspaceReload: WorkspaceReload = _
   private var buildToolSelector: BuildToolSelector = _
@@ -461,6 +463,11 @@ class MetalsLanguageServer(
         )
         shellRunner = register(
           new ShellRunner(languageClient, () => userConfig, time, statusBar)
+        )
+        MetalsFileSystem.metalsFS.setShellRunner(
+          shellRunner,
+          buildTargets,
+          executionContext
         )
         bloopInstall = new BloopInstall(
           workspace,
@@ -751,6 +758,10 @@ class MetalsLanguageServer(
           clientConfig,
           classFinder,
         )
+        lspFileSystemProvider = new LSPFileSystemProvider(
+          languageClient,
+          clientConfig
+        )
         popupChoiceReset = new PopupChoiceReset(
           workspace,
           tables,
@@ -817,7 +828,6 @@ class MetalsLanguageServer(
           )
         }
         findTextInJars = new FindTextInDependencyJars(
-          buildTargets,
           () => workspace,
           languageClient,
           saveJarFileToDisk = !clientConfig.isVirtualDocumentSupported(),
@@ -1066,7 +1076,8 @@ class MetalsLanguageServer(
     recentlyOpenedFiles.add(path)
 
     // Update md5 fingerprint from file contents on disk
-    fingerprints.add(path, FileIO.slurp(path, charset))
+    if (!path.isReadOnly)
+      fingerprints.add(path, FileIO.slurp(path, charset))
     // Update in-memory buffer contents from LSP client
     buffers.put(path, params.getTextDocument.getText)
 
@@ -1081,7 +1092,14 @@ class MetalsLanguageServer(
      * that we don't try to generate it for project files
      */
     val interactive = buildServerPromise.future.map { _ =>
-      interactiveSemanticdbs.textDocument(path)
+      // reduce loading of readonly files by passing the contents directly in
+      if (path.isReadOnly)
+        interactiveSemanticdbs.textDocument(
+          path,
+          Some(params.getTextDocument.getText)
+        )
+      else
+        interactiveSemanticdbs.textDocument(path)
     }
     // We need both parser and semanticdb for synthetic decorations
     val publishSynthetics = for {
@@ -1801,6 +1819,12 @@ class MetalsLanguageServer(
             params.kind == "class",
           )
           .asJavaObject
+      case ServerCommands.FileSystemStat(uriAsStr) =>
+        lspFileSystemProvider.getSystemStat(uriAsStr).asJavaObject
+      case ServerCommands.FileSystemReadFile(uriAsStr) =>
+        lspFileSystemProvider.readFile(uriAsStr).asJavaObject
+      case ServerCommands.FileSystemReadDirectory(uriAsStr) =>
+        lspFileSystemProvider.readDirectory(uriAsStr).asJavaObject
       case ServerCommands.RunDoctor() =>
         Future {
           doctor.onVisibilityDidChange(true)
@@ -2517,6 +2541,7 @@ class MetalsLanguageServer(
   private val indexer = Indexer(
     () => workspaceReload,
     () => doctor,
+    () => lspFileSystemProvider,
     languageClient,
     () => bspSession,
     executionContext,
@@ -2629,7 +2654,7 @@ class MetalsLanguageServer(
       definitionOnly: Boolean = false,
   ): Future[DefinitionResult] = {
     val source = positionParams.getTextDocument.getUri.toAbsolutePath
-    if (source.isScalaFilename || source.isJavaFilename) {
+    if (source.isScalaFilename || source.isJavaFilename || source.isClassfile) {
       val semanticDBDoc =
         semanticdbs.textDocument(source).documentIncludingStale
       (for {
@@ -2691,7 +2716,7 @@ class MetalsLanguageServer(
       token: CancelToken = EmptyCancelToken,
   ): Future[DefinitionResult] = {
     val source = position.getTextDocument.getUri.toAbsolutePath
-    if (source.isScalaFilename || source.isJavaFilename) {
+    if (source.isScalaFilename || source.isJavaFilename || source.isClassfile) {
       val result =
         timerProvider.timedThunk(
           "definition",

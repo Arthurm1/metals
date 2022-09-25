@@ -1,5 +1,6 @@
 package scala.meta.internal.metals
 
+import java.nio.file.Paths
 import java.{util => ju}
 
 import scala.concurrent.ExecutionContext
@@ -7,6 +8,7 @@ import scala.concurrent.Future
 
 import scala.meta.inputs.Input
 import scala.meta.internal.metals.MetalsEnrichments._
+import scala.meta.internal.metals.filesystem.MetalsFileSystem
 import scala.meta.internal.mtags.GlobalSymbolIndex
 import scala.meta.internal.mtags.Mtags
 import scala.meta.internal.mtags.Semanticdbs
@@ -17,12 +19,14 @@ import scala.meta.internal.parsing.Trees
 import scala.meta.internal.remotels.RemoteLanguageServer
 import scala.meta.internal.semanticdb
 import scala.meta.internal.semanticdb.IdTree
+import scala.meta.internal.semanticdb.Language
 import scala.meta.internal.semanticdb.OriginalTree
 import scala.meta.internal.semanticdb.Scala._
 import scala.meta.internal.semanticdb.SelectTree
 import scala.meta.internal.semanticdb.SymbolOccurrence
 import scala.meta.internal.semanticdb.Synthetic
 import scala.meta.internal.semanticdb.TextDocument
+import scala.meta.internal.tvp.ClasspathSymbols
 import scala.meta.io.AbsolutePath
 import scala.meta.pc.CancelToken
 
@@ -282,6 +286,7 @@ final class DefinitionProvider(
   }
 
   private def fromMtags(source: AbsolutePath, dirtyPos: Position) = {
+    // TODO why does a writable file use `source.toInput` instead of `source.toInputFromBuffers(buffers)`
     Mtags
       .allToplevels(source.toInput, scalaVersionSelector.getDialect(source))
       .occurrences
@@ -333,12 +338,28 @@ class DestinationProvider(
   private def bestTextDocument(
       symbolDefinition: SymbolDefinition
   ): TextDocument = {
-    val defnRevisedInput = symbolDefinition.path.toInput
+    val decodedClassfile =
+      if (symbolDefinition.path.isClassfile)
+        MetalsFileSystem.metalsFS
+          .decodeCFRFromClassFile(symbolDefinition.path.toNIO)
+          .map(text =>
+            Input.VirtualFile(symbolDefinition.path.toURI.toString(), text)
+          )
+      else None
     // Read text file from disk instead of editor buffers because the file
-    // on disk is more likely to parse.
+    // on disk is more likely to parse.  Unless it's readonly
+    val defnRevisedInput = decodedClassfile.getOrElse(
+      if (symbolDefinition.path.isReadOnly)
+        symbolDefinition.path.toInputFromBuffers(buffers)
+      else
+        symbolDefinition.path.toInput
+    )
+    val language =
+      if (symbolDefinition.path.isClassfile) Language.JAVA
+      else symbolDefinition.path.toLanguage
     lazy val parsed =
       mtags.index(
-        symbolDefinition.path.toLanguage,
+        language,
         defnRevisedInput,
         symbolDefinition.dialect,
       )
@@ -363,15 +384,45 @@ class DestinationProvider(
     definition(symbol, targets)
   }
 
+  private val classpathSymbols = new ClasspathSymbols(
+    isStatisticsEnabled = false
+  )
+
   def definition(
       symbol: String,
       allowedBuildTargets: Set[BuildTargetIdentifier],
   ): Option[SymbolDefinition] = {
-    val definitions = index.definitions(Symbol(symbol)).filter(_.path.exists)
+    val querySymbol: Symbol = Symbol(symbol)
+    val definitions = index.definitions(querySymbol).filter(_.path.exists)
+    val extraDefinitions = if (definitions.isEmpty) {
+      // search in all classpath, i.e. jars with no source
+      buildTargets
+        .inferBuildTarget(List(querySymbol.toplevel))
+        .flatMap(buildTarget => {
+          val metalsFSJar =
+            MetalsFileSystem.metalsFS.getWorkspaceJar(buildTarget.jar)
+          classpathSymbols
+            .symbols(metalsFSJar, symbol)
+            .filter(_.symbol == symbol)
+            .flatMap(_.uri)
+            .headOption
+            .map(symbolFullURI => {
+              val fullJarPath = AbsolutePath(Paths.get(symbolFullURI))
+              SymbolDefinition(
+                querySymbol,
+                querySymbol,
+                fullJarPath,
+                scala.meta.dialects.Scala212Source3,
+                None
+              )
+            })
+        })
+        .toList
+    } else definitions
     if (allowedBuildTargets.isEmpty)
-      definitions.headOption
+      extraDefinitions.headOption
     else {
-      val matched = definitions.find { defn =>
+      val matched = extraDefinitions.find { defn =>
         sourceBuildTargets(defn.path).exists(id =>
           allowedBuildTargets.contains(id)
         )
@@ -379,7 +430,7 @@ class DestinationProvider(
       // Fallback to any definition - it's needed for worksheets
       // They might have dynamic `import $dep` and these sources jars
       // aren't registered in buildTargets
-      matched.orElse(definitions.headOption)
+      matched.orElse(extraDefinitions.headOption)
     }
   }
 

@@ -1,5 +1,6 @@
 package scala.meta.internal.mtags
 
+import java.net.URL
 import java.net.URLClassLoader
 import java.nio.file.Paths
 
@@ -12,8 +13,17 @@ import scala.meta.io.RelativePath
 final class OpenClassLoader extends URLClassLoader(Array.empty) {
   private val isAdded = mutable.Set.empty[AbsolutePath]
   def addEntry(entry: AbsolutePath): Boolean = {
+    println(s"AddEntry ${entry.toURI}")
     if (!isAdded(entry)) {
-      super.addURL(entry.toNIO.toUri.toURL)
+      // url must end in "/" for the correct Loader to be selected for metalsfs:/somejar.jar
+      val url = entry.toNIO.toUri.toURL
+      val formattedURL = new URL(s"${url}/")
+      if (formattedURL.toString.contains("temurin")) {
+        val a = Thread.currentThread().getStackTrace().mkString("\n at ")
+        println(s"AddedEntry ${formattedURL}\n$a")
+      }
+      // TODO fix this for jdk
+      super.addURL(formattedURL)
       isAdded += entry
       true
     } else {
@@ -25,15 +35,22 @@ final class OpenClassLoader extends URLClassLoader(Array.empty) {
     val enumeration = super.findResources(uri)
     if (enumeration.hasMoreElements) {
       val url = enumeration.nextElement()
+      println(s"resolve $uri to $url")
       Some(AbsolutePath(Paths.get(url.toURI)))
     } else {
+      println(s"resolve $uri NOT FOUND")
       None
     }
   }
+
   def resolveAll(uri: String): List[AbsolutePath] = {
     val enumeration = super.findResources(uri)
-    enumeration.asScala.toList.map(url => AbsolutePath(Paths.get(url.toURI)))
+    val a=  enumeration.asScala.toList.map(url => AbsolutePath(Paths.get(url.toURI)))
+    if (a.nonEmpty)
+      println(s"resolveAll $uri ${a.map(_.toURI)}")
+    a
   }
+
   def resolve(relpath: RelativePath): Option[AbsolutePath] = {
     val uri = relpath.toURI(isDirectory = false).toString
     resolve(uri)
