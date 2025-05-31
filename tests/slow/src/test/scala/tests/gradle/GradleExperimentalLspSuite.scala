@@ -3,8 +3,8 @@ package tests.gradle
 import scala.concurrent.Future
 
 import scala.meta.internal.builds.GradleBuildTool
-import scala.meta.internal.builds.GradleDigest
 import scala.meta.internal.builds.GradleExperimentalBuildTool
+import scala.meta.internal.builds.GradleDigest
 import scala.meta.internal.metals.ClientCommands
 import scala.meta.internal.metals.Messages
 import scala.meta.internal.metals.Messages._
@@ -18,14 +18,15 @@ import ch.epfl.scala.bsp4j.ScalaMainClass
 import org.eclipse.lsp4j.MessageActionItem
 import tests.BaseImportSuite
 
-class GradleLspSuite extends BaseImportSuite("gradle-import") {
+class GradleExperimentalLspSuite extends BaseImportSuite("gradle-import") {
 
-  // GradleBuildTool will be the main tool for this test,
+  // GradleExperimentalBuildTool will be the main tool for this test,
   // which is what will be chosen when the user is prompted in the test
-  def buildTool: GradleBuildTool = GradleBuildTool(() => userConfig, workspace)
-
-  def alternativeBuildTool: GradleExperimentalBuildTool =
+  def buildTool: GradleExperimentalBuildTool =
     GradleExperimentalBuildTool(() => userConfig, workspace)
+
+  def alternativeBuildTool: GradleBuildTool =
+    GradleBuildTool(() => userConfig, workspace)
 
   def chooseBuildToolMessage: String =
     ChooseBuildTool.params(List(buildTool, alternativeBuildTool)).getMessage
@@ -38,7 +39,7 @@ class GradleLspSuite extends BaseImportSuite("gradle-import") {
 
   def chooseGradleBuildTool: Seq[MessageActionItem] => MessageActionItem = actions =>
       actions
-        .find(_.getTitle == "gradle")
+        .find(_.getTitle == "gradle (experimental)")
         .getOrElse(throw new Exception("build tool not found"))
 
   override def currentDigest(
@@ -117,7 +118,7 @@ class GradleLspSuite extends BaseImportSuite("gradle-import") {
       assert(
         server.headServer.tables.buildTool
           .selectedBuildTool()
-          .exists(_ == GradleBuildTool.name)
+          .exists(_ == GradleExperimentalBuildTool.name)
       )
     }
   }
@@ -147,7 +148,7 @@ class GradleLspSuite extends BaseImportSuite("gradle-import") {
       _ <- server.server.indexingPromise.future
       _ = assert(server.server.bspSession.get.main.isBloop)
       buildTool <- server.headServer.buildToolProvider.supportedBuildTool()
-      _ = assertEquals(buildTool.get.buildTool.executableName, "gradle")
+      _ = assertEquals(buildTool.get.buildTool.executableName, "gradle (experimental)")
       _ = assertEquals(
         buildTool.get.buildTool.projectRoot,
         workspace.resolve("inner"),
@@ -164,62 +165,6 @@ class GradleLspSuite extends BaseImportSuite("gradle-import") {
            |""".stripMargin,
       )
     } yield ()
-  }
-
-  test("basic-configured") {
-    client.chooseBuildTool = chooseGradleBuildTool
-    cleanWorkspace()
-    for {
-      _ <- initialize(
-        s"""|/gradle.properties
-            |# Signals that bloop is configured in the project
-            |bloop.configured=true
-            |/build.gradle
-            |buildscript {
-            |    repositories {
-            |        mavenCentral()
-            |    }
-            |
-            |    dependencies {
-            |        classpath 'ch.epfl.scala:gradle-bloop_2.12:${V.gradleBloopVersion}'
-            |    }
-            |}
-            |
-            |apply plugin: 'scala'
-            |apply plugin: 'bloop'
-            |repositories {
-            |    mavenCentral()
-            |}
-            |dependencies {
-            |    implementation 'org.scala-lang:scala-library:${V.scala213}'
-            |}
-            |/src/main/scala/A.scala
-            |
-            |""".stripMargin
-      )
-      _ = assertNoDiff(
-        client.workspaceMessageRequests,
-        initializeMessageRequests,
-      )
-      _ = client.messageRequests.clear() // restart
-      _ = assertStatus(_.isInstalled)
-      _ <- server.didChange("build.gradle")(_ + "\n// comment")
-      _ = assertNoDiff(client.workspaceMessageRequests, "")
-      _ <- server.didSave("build.gradle")
-      // Comment changes do not trigger "re-import project" request
-      _ = assertNoDiff(client.workspaceMessageRequests, "")
-      _ <- server.didChange("build.gradle") { text =>
-        text + "\ndef version = \"1.0.0\"\n"
-      }
-      _ = assertNoDiff(client.workspaceMessageRequests, "")
-      _ <- server.didSave("build.gradle")
-    } yield {
-      assertNoDiff(
-        client.workspaceMessageRequests,
-        // Project has .bloop directory so user is asked to "re-import project"
-        importBuildChangesMessage,
-      )
-    }
   }
 
   val javaOnlyTestName = "java-only-run"
@@ -256,7 +201,7 @@ class GradleLspSuite extends BaseImportSuite("gradle-import") {
       _ = assertStatus(_.isInstalled)
       _ <- server.didSave("src/main/java/a/Main.java")
       debugger <- server.startDebugging(
-        javaOnlyTestName,
+        s"${javaOnlyTestName}-main",
         DebugSessionParamsDataKind.SCALA_MAIN_CLASS,
         new ScalaMainClass(
           "a.Main",
@@ -587,25 +532,32 @@ class GradleLspSuite extends BaseImportSuite("gradle-import") {
             |}
             |""".stripMargin
       )
-      _ = assert(
+      _ = assertNoDiff(
         server.server.buildTargets.all
-          .exists(_.getDisplayName() == "some-project-name"),
-        "Build targets should contain \"some-project-name\"",
+          .map(_.getDisplayName())
+          .toSeq
+          .sorted
+          .mkString("\n"),
+        Seq(
+          "some-project-name-main",
+          "some-project-name-test",
+        ).mkString("\n"),
       )
       _ <- server.didChange("inner/settings.gradle")(_ =>
         "rootProject.name = 'new-name'\n"
       )
       _ = client.importBuildChanges = ImportBuildChanges.yes
       _ <- server.didSave("inner/settings.gradle")
-      _ = assert(
+      _ = assertNoDiff(
         server.server.buildTargets.all
-          .exists(_.getDisplayName() == "new-name"),
-        "Build targets should contain \"new-name\"",
-      )
-      _ = assert(
-        !server.server.buildTargets.all
-          .exists(_.getDisplayName() == "some-project-name"),
-        "Stale build target \"some-project-name\" should be removed.",
+          .map(_.getDisplayName())
+          .toSeq
+          .sorted
+          .mkString("\n"),
+        Seq(
+          "new-name-main",
+          "new-name-test",
+        ).mkString("\n"),
       )
     } yield ()
   }
